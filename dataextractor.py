@@ -3,6 +3,9 @@ import os, sys
 import json
 import pdfplumber
 
+# Replace "Your Institution" with ...
+MyUni = "Illinois"
+
 # Acme Databuddies pdf table extractor v.00001
 # This extractor extracts section titles and tables from each page of the pdf
 # It assumes that the order of titles is the same order of tables in each page.
@@ -18,7 +21,7 @@ import pdfplumber
 # MIT Open source license
 # https://opensource.org/licenses/MIT
 #
-# Send errors, ommissions, suggestions, coffee to angrave@illinois.edu
+# Send errors, ommissions, suggestions, coffee to angrave at illinois edu
 
 # Section title extraction notes & various observations
 # Section titles were in the form 'Table 1.2.3 A longer description here'
@@ -30,11 +33,19 @@ import pdfplumber
 # 2018: 'UPGGSD+CMSSBX10-10'
 # CMSSBX10 = computer modern sans serif bold extended 10pt
 
-
-# Example output-
-# 100 tables written to pdfs/DataBuddies_2018-tsv
-# 192 tables written to pdfs/DataBuddies_2019-tsv
-# 200 tables written to pdfs/DataBuddies_2020-tsv
+# Example run-
+# ./dataextractor.py ../../pdfs/DataBuddies_2018.pdf
+# Reading page 66
+# Writing ../../pdfs/DataBuddies_2018.json
+# 111 tables written to ../../pdfs/DataBuddies_2018-tsv
+# ./dataextractor.py ../../pdfs/DataBuddies_2019.pdf
+# Reading page 106
+# Writing ../../pdfs/DataBuddies_2019.json
+# 201 tables written to ../../pdfs/DataBuddies_2019-tsv
+# ./dataextractor.py ../../pdfs/DataBuddies_2020.pdf
+# Reading page 128
+# Writing ../../pdfs/DataBuddies_2020.json
+# 207 tables written to ../../pdfs/DataBuddies_2020-tsv
 
 
 # Note reported font size can vary by a tiny amount; hence the rounding to the nearest point
@@ -53,7 +64,7 @@ def extractTableHeadings(page):
     results = []
     expectedFontName = "+CMSSBX10-"  # True for all pdfs processed so far (2018-2020)
     # "+CMSSBX10-25" for Table of Contents
-
+    yPositions = []  # Expect headings to be vertically ordered
     # State machine
     isBuilding = False
     headingFontInfo = ""
@@ -61,7 +72,9 @@ def extractTableHeadings(page):
 
     for i, wordInfo in enumerate(allpagewords):
         lastElement = i == len(allpagewords) - 1
-        if "Table" == wordInfo["text"]:
+        if not isBuilding and "Table" == wordInfo["text"]:
+            # We could require round(fontsize) to be 10 not 25 (="Table of Contents")
+            yPositions.append(wordInfo["top"])
             isBuilding = True
             headingFontInfo = toFontInfo(wordInfo)
             assert expectedFontName in headingFontInfo, headingFontInfo
@@ -73,6 +86,7 @@ def extractTableHeadings(page):
         elif (lastElement or not isBuilding) and partial:
             results.append(" ".join(partial))
             partial = []
+    assert isIncreasing(yPositions), yPositions
     ignore = "Table layout"
     # Table of Contents
     results = [item for item in results if item.split(" ")[1][0] in "0123456789"]
@@ -184,11 +198,11 @@ def processOneTable(section, table):
         assert h2[1] == h2[4] and h2[2] == h2[5], h2  # Women Men .. Women Men
         header = [
             "",
-            "Illinois-" + h2[1],
-            "Illinois-" + h2[2],
-            "Illinois-",
-            "Similar-" + h2[4],
-            "Similar-" + h2[5],
+            f"{MyUni}-{h2[1]}" + ,
+            f"{MyUni}-{h2[2]}" + ,
+            f"{MyUni}-",
+            f"Similar-{h2[4]}",
+            f"Similar-{h2[5]}" ,
             "Similar-",
         ]
         # And on the third row we pick up "Sig" too
@@ -202,7 +216,7 @@ def processOneTable(section, table):
         datarows = table[1:]
 
     if header == ["", "Your Institution Similar Institutions\nSig.\n(%) (%)", "", ""]:
-        header = ["", "Illinois (%)", "Similar (%)", "Sig."]
+        header = ["", f"{MyUni} (%)", "Similar (%)", "Sig."]
 
     elif header == [
         "",
@@ -212,8 +226,8 @@ def processOneTable(section, table):
     ]:
         header = [
             "",
-            "Illinois-Mean",
-            "Illinois-SD",
+            f"{MyUni}-Mean",
+            f"{MyUni}-SD",
             "Similar-Mean",
             "Similar-SD",
             "Sig",
@@ -286,14 +300,45 @@ def isDataTable(table):
     return False
 
 
+def isIncreasing(list):
+    if len(list) < 2:
+        return True
+    return all(a < b for a, b in zip(list[:-1], list[1:]))
+
+
+assert not isIncreasing([6, 7, 7, 8])
+assert isIncreasing([2, 3, 5, 6])
+
+
 def readDataBuddiesTables(inputPath):
     tableData = []
+    table_settings = {}
+    # In addition to the content we need the Y position of each table, so portions of this code is based on
+    # The implementation of extract_tables
+    # https://github.com/jsvine/pdfplumber/blob/18a27516c5e5a9efd6bcb3c1639aed2017777621/pdfplumber/page.py#L223
+    #
+    resolved_settings = pdfplumber.page.TableFinder.resolve_table_settings(
+        table_settings
+    )
+    extract_kwargs = {
+        k: table_settings["text_" + k]
+        for k in ["x_tolerance", "y_tolerance"]
+        if "text_" + k in table_settings
+    }
+
     with pdfplumber.open(inputPath) as pdf:
         for loopIndex, page in enumerate(pdf.pages):
             print(f"\rReading page {loopIndex +1}", flush=True, end="")
             tableHeadings = extractTableHeadings(page)
 
-            tables = page.extract_tables()
+            pdfTables = page.find_tables(resolved_settings)
+            # assert that tables are vertically ordered
+            yPositions = list(map(lambda t: t.bbox[1], pdfTables))
+            assert isIncreasing(yPositions)
+
+            tables = [t.extract(**extract_kwargs) for t in pdfTables]
+            # END
+            # Early pages have some blank tables comprised of empty strings and None
             tables = [t for t in tables if isDataTable(t)]
 
             assert len(tableHeadings) == len(
@@ -312,7 +357,10 @@ def main():
         This script extracts data from DataBuddy reports.
         Do not trust the output without manually verifying data in the pdf.
         It creates a single json file in the same directory as the input file
-        And hundreds of tsv files in a new sub-directory (e.g. mydata-tsvs)"""
+        And hundreds of tsv files in a new sub-directory (e.g. mydata-tsvs).
+        Send bug reports and suggestions to angrave at illinois edu
+        Latest version at https://github.com/angrave/DataBuddiesPdfExtractor
+        """
         )
         sys.exit(0)
 
