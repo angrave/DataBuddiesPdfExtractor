@@ -42,13 +42,16 @@ import pdfplumber
 def toFontInfo(info):
     return f"{info['fontname']}-{round(info['size'])}"
 
-
+# returns a list of strings - the apparent section headings on the page
+# If we're lucky there will be the same number of headings as tables (and in the same order)
+# A typical string is in the form, 'Table 1.2.3 What is your favorite llama?'
 def extractTableHeadings(page):
     allpagewords = page.extract_words(
         use_text_flow=True, extra_attrs=["fontname", "size"]
     )
     results = []
-    expectedFontName = "+CMSSBX10-10"  # True for all pdfs processed so far (2018-2020)
+    expectedFontName = "+CMSSBX10-"  # True for all pdfs processed so far (2018-2020)
+    # "+CMSSBX10-25" for Table of Contents
 
     # State machine
     isBuilding = False
@@ -60,7 +63,7 @@ def extractTableHeadings(page):
         if "Table" == wordInfo["text"]:
             isBuilding = True
             headingFontInfo = toFontInfo(wordInfo)
-            assert headingFontInfo.endswith(expectedFontName), headingFontInfo
+            assert expectedFontName in headingFontInfo, headingFontInfo
 
         if toFontInfo(wordInfo) != headingFontInfo:
             isBuilding = False
@@ -70,13 +73,12 @@ def extractTableHeadings(page):
             results.append(" ".join(partial))
             partial = []
     ignore = "Table layout"
-    results = [item for item in results if not item.startswith(ignore)]
+    # Table of Contents
+    results = [item for item in results if item.split(" ")[1][0] in "0123456789" ]
     return results
-
 
 def noneToEmpty(item):
     return "" if item is None else item
-
 
 def filterPercentAfterDigit(item):
     # Looking for strings that end with a percentage char
@@ -87,11 +89,10 @@ def filterPercentAfterDigit(item):
         return item[:-1]
     return item
 
-
 assert filterPercentAfterDigit("123%") == "123"
 assert filterPercentAfterDigit("123") == "123"
 
-# Expands mean and SD values into separate columns
+# Expands mean and SD values into separate columns (see asserted example below)
 def expandMeanSDFromRowAll(row):
     result = [row[0]]
     for item in row[1:]:
@@ -102,15 +103,14 @@ def expandMeanSDFromRowAll(row):
             result.append(item)
     return result
 
-
 assert expandMeanSDFromRowAll(["a", "1 (2)", "b"]) == ["a", "1", "2", "b"]
 
-# Ensure all columns have a name
+# Ensure all columns have a name (see asserted example below)
+# Returns a new list where empty column headings are replaced with Column<i>
 def addNameForEmptyColumnNames(header):
     return [
         item if len(item) > 0 else f"Column{idx+1}" for idx, item in enumerate(header)
     ]
-
 
 assert addNameForEmptyColumnNames(["", "A", ""]) == ["Column1", "A", "Column3"]
 
@@ -121,8 +121,7 @@ def noDuplicateColumnNames(header):
         assert h not in seen, f"Duplicate column {h} in {header}"
         seen.add(h)
 
-
-# Expand Mean and SD header into 2 columns
+# Expand Mean and SD header into 2 columns (see asserted example below)
 def expandHeaderMeanSD(header):
     result = []
     for h in header:
@@ -132,10 +131,14 @@ def expandHeaderMeanSD(header):
             result.append(h)
     return result
 
-
 assert expandHeaderMeanSD(["a", "bMean (SD)", "c"]) == ["a", "b-Mean", "b-SD", "c"]
 
 # Do the dirty work of parsing a data buddies table
+# They have different formats but the basic outline is
+# Discard the unwanted footer
+# Build a single row header from multiple rows
+# Discard '%' in the data values
+
 def processOneTable(section, table):
     # example footnote:
     # '(*) p≤.05 and Cohen’s d or h≥.30; (N/A) n<5 or test criteria were not met'
@@ -154,7 +157,7 @@ def processOneTable(section, table):
 
     # Watch out for Triple row headers :-)
     # [['', 'Your Institution', '', '', 'Similar Institutions', '', ''], ['', 'Women', 'Men', '', 'Women', 'Men', '']]
-    # assert table[1][0] != '', table[0:2]
+
     if table[1][0] == "":
         h1 = table[0]
         # The only example I've seen so far, so hard code for it
@@ -215,11 +218,16 @@ def processOneTable(section, table):
 
     datarows = [[filterPercentAfterDigit(item) for item in row] for row in datarows]
 
+    # Check and fix Ragged rows.
+    # The last row may be just the absolute counts and can be short
+    # Other rows may skip the last column if there is no "*" to report
     for row in datarows:
         if row[0] != "n":
             assert len(row) == len(header) or len(row) + 1 == len(
                 header
             ), f"{section}:{header}\n{row}"
+        if len(row) < len(header):
+            row.extend([''] * (len(header)-len(row)))
 
     assert "Your Institution" not in " ".join(header), f"{section}:{header}"
     assert "Similar Institutions" not in " ".join(header), f"{section}:{header}"
@@ -244,7 +252,6 @@ def writeJson(jsonFilename, alldata):
     with open(jsonFilename, "w", encoding="utf8") as fh:
         json.dump(alldata, fh)
 
-
 def writeOneTableTSV(outputbase, one):
     index = one["index"]
     tsvFilename = f"{outputbase}-table-{index.replace('.','_')}.tsv"
@@ -260,6 +267,27 @@ def writeOneTableTSV(outputbase, one):
     with open(titleFilename, "w", encoding="utf8") as fh:
         print(one["description"], file=fh)
 
+def isDataTable(table):
+    if len(table)>2: return True
+    headings = "".join([noneToEmpty(item) for item in table[0]])
+    assert len(headings) == 0, headings
+    return False
+    
+def readDataBuddiesTables(inputPath):
+    tableData = []
+    with pdfplumber.open(inputPath) as pdf:
+        for loopIndex, page in enumerate(pdf.pages):
+            print(f"\rReading page {loopIndex +1}", flush=True, end="")
+            tableHeadings = extractTableHeadings(page)
+            
+            tables = page.extract_tables()
+            tables = [t for t in tables if isDataTable(t)]
+
+            assert len(tableHeadings) == len(tables), f"{tableHeadings}. Expected {len(tables)}\n{tables}"
+            for heading, table in zip(tableHeadings, tables):
+                one = processOneTable(heading, table)
+                tableData.append(one)
+    return tableData
 
 def main():
     if len(sys.argv) != 2:
@@ -267,26 +295,16 @@ def main():
             f"""Example Usage: {sys.argv[0]} mydata.pdf
         This script extracts data from DataBuddy reports.
         Do not trust the output without manually verifying data in the pdf.
-        It creates a single json file in the same directory mydata.json
-        And hundreds of tsv files in the mydata-tsvs sub-directory"""
+        It creates a single json file in the same directory as the input file
+        And hundreds of tsv files in a new sub-directory (e.g. mydata-tsvs)"""
         )
         sys.exit(0)
 
     inputPath = sys.argv[1]
-    assert inputPath.endswith(".pdf")  # We will be dropping last 4 chars later
+    assert inputPath.endswith(".pdf")
     inputPathNoExt = os.path.splitext(inputPath)[0]
 
-    allData = []
-
-    with pdfplumber.open(inputPath) as pdf:
-        for loopIndex, page in enumerate(pdf.pages[10:]):
-            tableHeadings = extractTableHeadings(page)
-            tables = page.extract_tables()
-            print(f"\rReading page {loopIndex +1}", flush=True, end="")
-            assert len(tableHeadings) == len(tables), tableHeadings
-            for heading, table in zip(tableHeadings, tables):
-                one = processOneTable(heading, table)
-                allData.append(one)
+    allData = readDataBuddiesTables(inputPath)
 
     outputJsonPath = f"{inputPathNoExt}.json"
     print(f"\nWriting {outputJsonPath}")
@@ -299,7 +317,6 @@ def main():
         writeOneTableTSV(outputTSVBase, table)
 
     print(f"{len(allData)} tables written to {outputTSVDir}")
-
 
 if __name__ == "__main__":
     main()
