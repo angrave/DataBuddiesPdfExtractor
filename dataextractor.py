@@ -42,6 +42,7 @@ import pdfplumber
 def toFontInfo(info):
     return f"{info['fontname']}-{round(info['size'])}"
 
+
 # returns a list of strings - the apparent section headings on the page
 # If we're lucky there will be the same number of headings as tables (and in the same order)
 # A typical string is in the form, 'Table 1.2.3 What is your favorite llama?'
@@ -74,11 +75,13 @@ def extractTableHeadings(page):
             partial = []
     ignore = "Table layout"
     # Table of Contents
-    results = [item for item in results if item.split(" ")[1][0] in "0123456789" ]
+    results = [item for item in results if item.split(" ")[1][0] in "0123456789"]
     return results
+
 
 def noneToEmpty(item):
     return "" if item is None else item
+
 
 def filterPercentAfterDigit(item):
     # Looking for strings that end with a percentage char
@@ -88,6 +91,7 @@ def filterPercentAfterDigit(item):
     if item[-2] in "0123456789":
         return item[:-1]
     return item
+
 
 assert filterPercentAfterDigit("123%") == "123"
 assert filterPercentAfterDigit("123") == "123"
@@ -103,6 +107,7 @@ def expandMeanSDFromRowAll(row):
             result.append(item)
     return result
 
+
 assert expandMeanSDFromRowAll(["a", "1 (2)", "b"]) == ["a", "1", "2", "b"]
 
 # Ensure all columns have a name (see asserted example below)
@@ -112,6 +117,7 @@ def addNameForEmptyColumnNames(header):
         item if len(item) > 0 else f"Column{idx+1}" for idx, item in enumerate(header)
     ]
 
+
 assert addNameForEmptyColumnNames(["", "A", ""]) == ["Column1", "A", "Column3"]
 
 # assert that column names are unique
@@ -120,6 +126,7 @@ def noDuplicateColumnNames(header):
     for h in header:
         assert h not in seen, f"Duplicate column {h} in {header}"
         seen.add(h)
+
 
 # Expand Mean and SD header into 2 columns (see asserted example below)
 def expandHeaderMeanSD(header):
@@ -131,6 +138,7 @@ def expandHeaderMeanSD(header):
             result.append(h)
     return result
 
+
 assert expandHeaderMeanSD(["a", "bMean (SD)", "c"]) == ["a", "b-Mean", "b-SD", "c"]
 
 # Do the dirty work of parsing a data buddies table
@@ -138,6 +146,7 @@ assert expandHeaderMeanSD(["a", "bMean (SD)", "c"]) == ["a", "b-Mean", "b-SD", "
 # Discard the unwanted footer
 # Build a single row header from multiple rows
 # Discard '%' in the data values
+
 
 def processOneTable(section, table):
     # example footnote:
@@ -227,7 +236,7 @@ def processOneTable(section, table):
                 header
             ), f"{section}:{header}\n{row}"
         if len(row) < len(header):
-            row.extend([''] * (len(header)-len(row)))
+            row.extend([""] * (len(header) - len(row)))
 
     assert "Your Institution" not in " ".join(header), f"{section}:{header}"
     assert "Similar Institutions" not in " ".join(header), f"{section}:{header}"
@@ -252,6 +261,7 @@ def writeJson(jsonFilename, alldata):
     with open(jsonFilename, "w", encoding="utf8") as fh:
         json.dump(alldata, fh)
 
+
 def writeOneTableTSV(outputbase, one):
     index = one["index"]
     tsvFilename = f"{outputbase}-table-{index.replace('.','_')}.tsv"
@@ -267,27 +277,33 @@ def writeOneTableTSV(outputbase, one):
     with open(titleFilename, "w", encoding="utf8") as fh:
         print(one["description"], file=fh)
 
+
 def isDataTable(table):
-    if len(table)>2: return True
+    if len(table) > 2:
+        return True
     headings = "".join([noneToEmpty(item) for item in table[0]])
     assert len(headings) == 0, headings
     return False
-    
+
+
 def readDataBuddiesTables(inputPath):
     tableData = []
     with pdfplumber.open(inputPath) as pdf:
         for loopIndex, page in enumerate(pdf.pages):
             print(f"\rReading page {loopIndex +1}", flush=True, end="")
             tableHeadings = extractTableHeadings(page)
-            
+
             tables = page.extract_tables()
             tables = [t for t in tables if isDataTable(t)]
 
-            assert len(tableHeadings) == len(tables), f"{tableHeadings}. Expected {len(tables)}\n{tables}"
+            assert len(tableHeadings) == len(
+                tables
+            ), f"{tableHeadings}. Expected {len(tables)}\n{tables}"
             for heading, table in zip(tableHeadings, tables):
                 one = processOneTable(heading, table)
                 tableData.append(one)
     return tableData
+
 
 def main():
     if len(sys.argv) != 2:
@@ -317,6 +333,7 @@ def main():
         writeOneTableTSV(outputTSVBase, table)
 
     print(f"{len(allData)} tables written to {outputTSVDir}")
+
 
 if __name__ == "__main__":
     main()
