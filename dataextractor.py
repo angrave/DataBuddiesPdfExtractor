@@ -91,8 +91,8 @@ def extractTableHeadings(page):
             results.append(" ".join(partial))
             partial = []
     assert isIncreasing(yPositions), yPositions
-    ignore = "Table layout"
-    # Table of Contents
+    # we want to ignore "Table layout" and "Table of Contents"
+    # Filter on the second word- it should be a section identifier e.g. "1.2.3"
     results = [item for item in results if item.split(" ")[1][0] in "0123456789"]
     return results
 
@@ -184,7 +184,7 @@ def processOneTable(section, table):
 
     # Watch out for Triple row headers :-)
     # [['', 'Your Institution', '', '', 'Similar Institutions', '', ''], ['', 'Women', 'Men', '', 'Women', 'Men', '']]
-
+    # If we find an empty second row first row, assert that fits the above pattern
     if table[1][0] == "":
         h1 = table[0]
         # The only example I've seen so far, so hard code for it
@@ -268,7 +268,7 @@ def processOneTable(section, table):
     assert ("." in index) and (index[0] in "0123456789"), index
     description = " ".join(sectionAsWords[2:])
     return {
-        "index": sectionAsWords[1],
+        "index": index,
         "description": description,
         "header": header,
         "data": datarows,
