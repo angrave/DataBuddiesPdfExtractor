@@ -202,8 +202,8 @@ def processOneTable(section, table):
         assert h2[1] == h2[4] and h2[2] == h2[5], h2  # Women Men .. Women Men
         header = [
             "",
-            f"{MyUni}-{h2[1]}" + ,
-            f"{MyUni}-{h2[2]}" + ,
+            f"{MyUni}-{h2[1]}" ,
+            f"{MyUni}-{h2[2]}" ,
             f"{MyUni}-",
             f"Similar-{h2[4]}",
             f"Similar-{h2[5]}" ,
